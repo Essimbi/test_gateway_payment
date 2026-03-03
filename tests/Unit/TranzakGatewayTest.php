@@ -75,17 +75,20 @@ test('TranzakGateway can initialize payment', function () {
 test('TranzakGateway can verify transaction with SUCCESSFUL status', function () {
     Log::shouldReceive('debug')->andReturn(null);
     
-    // Mock successful HTTP response
+    // Mock successful HTTP response (Tranzak uses GET /xp021/v1/request/details?requestId=)
     Http::fake([
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/req_123456' => Http::response([
-            'request_id' => 'req_123456',
-            'status' => 'SUCCESSFUL',
-            'amount' => 1000,
-            'currencyCode' => 'XAF',
-            'mchTransactionRef' => 'TXN_123',
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123456',
+                'status' => 'SUCCESSFUL',
+                'amount' => 1000,
+                'currencyCode' => 'XAF',
+                'mchTransactionRef' => 'TXN_123',
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -109,12 +112,15 @@ test('TranzakGateway can verify transaction with FAILED status', function () {
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/req_123456' => Http::response([
-            'request_id' => 'req_123456',
-            'status' => 'FAILED',
-            'amount' => 1000,
-            'currencyCode' => 'XAF',
-            'mchTransactionRef' => 'TXN_123',
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123456',
+                'status' => 'FAILED',
+                'amount' => 1000,
+                'currencyCode' => 'XAF',
+                'mchTransactionRef' => 'TXN_123',
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -134,12 +140,15 @@ test('TranzakGateway can verify transaction with PENDING status', function () {
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/req_123456' => Http::response([
-            'request_id' => 'req_123456',
-            'status' => 'PENDING',
-            'amount' => 1000,
-            'currencyCode' => 'XAF',
-            'mchTransactionRef' => 'TXN_123',
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123456',
+                'status' => 'PENDING',
+                'amount' => 1000,
+                'currencyCode' => 'XAF',
+                'mchTransactionRef' => 'TXN_123',
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -205,21 +214,25 @@ test('TranzakGateway can handle callback with only request_id', function () {
     
     $result = $gateway->handleCallback($payload);
     
+    // Returns internal transaction_id for PaymentService consistency
     expect($result)->toHaveKey('transaction_id')
-        ->and($result['transaction_id'])->toBe('req_123456');
+        ->and($result['transaction_id'])->toBe('TXN_456');
 });
 
 test('TranzakGateway validates callback with request_id', function () {
     Log::shouldReceive('debug')->andReturn(null);
     
-    // Mock successful HTTP response for validation
+    // Mock successful HTTP response for validation (Tranzak GET request/details)
     Http::fake([
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/req_123456' => Http::response([
-            'request_id' => 'req_123456',
-            'status' => 'SUCCESSFUL',
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123456',
+                'status' => 'SUCCESSFUL',
+            ],
+            'success' => true,
         ], 200)
     ]);
     

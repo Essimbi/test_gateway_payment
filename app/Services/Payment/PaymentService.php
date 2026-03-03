@@ -114,7 +114,11 @@ class PaymentService
                 'transaction_id' => $transactionId,
                 'gateway' => $gatewayType->value,
                 'payment_id' => $response['payment_id'] ?? null,
+                'has_payment_url' => isset($response['payment_url']),
             ]);
+            
+            // Re-read transaction to ensure we have the updated one
+            $transaction = $transaction->fresh();
             
             return $transaction;
         } catch (\Exception $e) {
@@ -141,7 +145,9 @@ class PaymentService
      */
     public function getTransaction(string $transactionId): ?Transaction
     {
-        return Transaction::where('transaction_id', $transactionId)->first();
+        return Transaction::where('transaction_id', $transactionId)
+            ->orWhere('gateway_payment_id', $transactionId)
+            ->first();
     }
 
     /**
@@ -172,8 +178,13 @@ class PaymentService
         ]);
         
         try {
+            // For Tranzak, the API requires requestId (gateway_payment_id), not our internal transaction_id
+            $verifyIdentifier = ($transaction->gateway_type === GatewayType::TRANZAK && !empty($transaction->gateway_payment_id))
+                ? $transaction->gateway_payment_id
+                : $transactionId;
+
             // Call gateway API to check status
-            $response = $gateway->verifyTransaction($transactionId);
+            $response = $gateway->verifyTransaction($verifyIdentifier);
             
             Log::debug('Gateway API response', [
                 'transaction_id' => $transactionId,

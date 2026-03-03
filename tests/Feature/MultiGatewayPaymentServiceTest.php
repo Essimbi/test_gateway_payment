@@ -84,19 +84,26 @@ test('PaymentService can initialize payment with CinetPay gateway', function () 
 });
 
 test('PaymentService can initialize payment with Tranzak gateway', function () {
-    // Mock Tranzak API response
+    // Mock Tranzak API response (POST /xp021/v1/request/create)
     Http::fake([
-        'https://dsapi.tranzak.me/v1/payment/request' => Http::response([
-            'request_id' => 'req_tranzak_123',
-            'links' => [
-                'payment_url' => 'https://pay.tranzak.me/payment/req_tranzak_123'
+        'https://dsapi.tranzak.me/auth/token' => Http::response([
+            'data' => ['token' => 'mocked_token']
+        ], 200),
+        'https://dsapi.tranzak.me/xp021/v1/request/create' => Http::response([
+            'data' => [
+                'requestId' => 'req_tranzak_123',
+                'links' => [
+                    'paymentAuthUrl' => 'https://pay.tranzak.me/payment/req_tranzak_123'
+                ],
+                'status' => 'PENDING',
             ],
-            'status' => 'PENDING',
+            'success' => true,
         ], 200)
     ]);
     
     Log::shouldReceive('info')->zeroOrMoreTimes();
     Log::shouldReceive('debug')->zeroOrMoreTimes();
+    Log::shouldReceive('error')->zeroOrMoreTimes();
     
     $config = config('payment.gateways');
     $factory = new GatewayFactory($config);
@@ -150,12 +157,19 @@ test('PaymentService logs gateway information when initializing CinetPay payment
 
 test('PaymentService logs gateway information when initializing Tranzak payment', function () {
     Http::fake([
-        'https://dsapi.tranzak.me/v1/payment/request' => Http::response([
-            'request_id' => 'req_123',
-            'links' => ['payment_url' => 'https://pay.tranzak.me/payment/req_123'],
+        'https://dsapi.tranzak.me/auth/token' => Http::response([
+            'data' => ['token' => 'mocked_token']
+        ], 200),
+        'https://dsapi.tranzak.me/xp021/v1/request/create' => Http::response([
+            'data' => [
+                'requestId' => 'req_123',
+                'links' => ['paymentAuthUrl' => 'https://pay.tranzak.me/payment/req_123'],
+            ],
+            'success' => true,
         ], 200)
     ]);
     
+    Log::shouldReceive('error')->zeroOrMoreTimes();
     $loggedGateway = null;
     Log::shouldReceive('info')
         ->withArgs(function ($message, $context) use (&$loggedGateway) {
@@ -214,26 +228,34 @@ test('PaymentService can verify CinetPay transaction status', function () {
 });
 
 test('PaymentService can verify Tranzak transaction status', function () {
-    // Create a Tranzak transaction
+    // Create a Tranzak transaction with gateway_payment_id (requestId) - required for API call
     $user = User::factory()->create();
     $transaction = Transaction::factory()->create([
         'user_id' => $user->id,
         'gateway_type' => GatewayType::TRANZAK,
+        'gateway_payment_id' => 'req_123',
         'status' => PaymentStatus::PENDING,
     ]);
     
-    // Mock Tranzak status check
+    // Mock Tranzak status check (GET /xp021/v1/request/details)
     Http::fake([
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_123',
-            'status' => 'SUCCESSFUL',
-            'amount' => 2000,
-            'mchTransactionRef' => $transaction->transaction_id,
+        'https://dsapi.tranzak.me/auth/token' => Http::response([
+            'data' => ['token' => 'mocked_token']
+        ], 200),
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123',
+                'status' => 'SUCCESSFUL',
+                'amount' => 2000,
+                'mchTransactionRef' => $transaction->transaction_id,
+            ],
+            'success' => true,
         ], 200)
     ]);
     
     Log::shouldReceive('info')->zeroOrMoreTimes();
     Log::shouldReceive('debug')->zeroOrMoreTimes();
+    Log::shouldReceive('error')->zeroOrMoreTimes();
     
     $config = config('payment.gateways');
     $factory = new GatewayFactory($config);
@@ -286,14 +308,21 @@ test('PaymentService logs gateway information when verifying Tranzak transaction
     $transaction = Transaction::factory()->create([
         'user_id' => $user->id,
         'gateway_type' => GatewayType::TRANZAK,
+        'gateway_payment_id' => 'req_123',
         'status' => PaymentStatus::PENDING,
     ]);
     
     Http::fake([
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_123',
-            'status' => 'SUCCESSFUL',
-            'mchTransactionRef' => $transaction->transaction_id,
+        'https://dsapi.tranzak.me/auth/token' => Http::response([
+            'data' => ['token' => 'mocked_token']
+        ], 200),
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123',
+                'status' => 'SUCCESSFUL',
+                'mchTransactionRef' => $transaction->transaction_id,
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -308,6 +337,7 @@ test('PaymentService logs gateway information when verifying Tranzak transaction
         ->zeroOrMoreTimes();
     
     Log::shouldReceive('debug')->zeroOrMoreTimes();
+    Log::shouldReceive('error')->zeroOrMoreTimes();
     
     $config = config('payment.gateways');
     $factory = new GatewayFactory($config);
@@ -361,21 +391,29 @@ test('PaymentService can process Tranzak callback', function () {
     $transaction = Transaction::factory()->create([
         'user_id' => $user->id,
         'gateway_type' => GatewayType::TRANZAK,
+        'gateway_payment_id' => 'req_123',
         'status' => PaymentStatus::PENDING,
     ]);
     
-    // Mock verification call
+    // Mock verification call (validateCallback + verifyTransactionStatus)
     Http::fake([
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_123',
-            'status' => 'SUCCESSFUL',
-            'mchTransactionRef' => $transaction->transaction_id,
-            'amount' => 2000,
+        'https://dsapi.tranzak.me/auth/token' => Http::response([
+            'data' => ['token' => 'mocked_token']
+        ], 200),
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123',
+                'status' => 'SUCCESSFUL',
+                'mchTransactionRef' => $transaction->transaction_id,
+                'amount' => 2000,
+            ],
+            'success' => true,
         ], 200)
     ]);
     
     Log::shouldReceive('info')->zeroOrMoreTimes();
     Log::shouldReceive('debug')->zeroOrMoreTimes();
+    Log::shouldReceive('error')->zeroOrMoreTimes();
     
     $config = config('payment.gateways');
     $factory = new GatewayFactory($config);
@@ -443,14 +481,21 @@ test('PaymentService logs gateway information when processing Tranzak callback',
     $transaction = Transaction::factory()->create([
         'user_id' => $user->id,
         'gateway_type' => GatewayType::TRANZAK,
+        'gateway_payment_id' => 'req_123',
         'status' => PaymentStatus::PENDING,
     ]);
     
     Http::fake([
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_123',
-            'status' => 'SUCCESSFUL',
-            'mchTransactionRef' => $transaction->transaction_id,
+        'https://dsapi.tranzak.me/auth/token' => Http::response([
+            'data' => ['token' => 'mocked_token']
+        ], 200),
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_123',
+                'status' => 'SUCCESSFUL',
+                'mchTransactionRef' => $transaction->transaction_id,
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -465,6 +510,7 @@ test('PaymentService logs gateway information when processing Tranzak callback',
         ->zeroOrMoreTimes();
     
     Log::shouldReceive('debug')->zeroOrMoreTimes();
+    Log::shouldReceive('error')->zeroOrMoreTimes();
     
     $config = config('payment.gateways');
     $factory = new GatewayFactory($config);

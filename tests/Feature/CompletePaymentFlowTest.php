@@ -233,16 +233,19 @@ test('complete Tranzak payment flow from selection to verification', function ()
         ->and($transaction->gateway_payment_id)->toBe('req_tranzak_456')
         ->and($transaction->currency)->toBe('XAF');
     
-    // Step 4: Callback from Tranzak
+    // Step 4: Callback from Tranzak (validateCallback + verifyTransactionStatus use xp021/v1/request/details)
     Http::fake([
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_tranzak_456',
-            'status' => 'SUCCESSFUL',
-            'amount' => $amount,
-            'mchTransactionRef' => $transaction->transaction_id,
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_tranzak_456',
+                'status' => 'SUCCESSFUL',
+                'amount' => $amount,
+                'mchTransactionRef' => $transaction->transaction_id,
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -267,10 +270,13 @@ test('complete Tranzak payment flow from selection to verification', function ()
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_tranzak_456',
-            'status' => 'SUCCESSFUL',
-            'mchTransactionRef' => $transaction->transaction_id,
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_tranzak_456',
+                'status' => 'SUCCESSFUL',
+                'mchTransactionRef' => $transaction->transaction_id,
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -487,10 +493,13 @@ test('complete Tranzak failed payment flow', function () {
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_fail',
-            'status' => 'FAILED',
-            'mchTransactionRef' => $transaction->transaction_id,
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_fail',
+                'status' => 'FAILED',
+                'mchTransactionRef' => $transaction->transaction_id,
+            ],
+            'success' => true,
         ], 200)
     ]);
     
@@ -511,10 +520,13 @@ test('complete Tranzak failed payment flow', function () {
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/*' => Http::response([
-            'request_id' => 'req_fail',
-            'status' => 'FAILED',
-            'mchTransactionRef' => $transaction->transaction_id,
+        'https://dsapi.tranzak.me/xp021/v1/request/details*' => Http::response([
+            'data' => [
+                'requestId' => 'req_fail',
+                'status' => 'FAILED',
+                'mchTransactionRef' => $transaction->transaction_id,
+            ],
+            'success' => true,
         ], 200)
     ]);
     

@@ -37,11 +37,14 @@ test('TranzakClient can create payment successfully', function () {
             'data' => ['token' => 'mocked_token']
         ], 200),
         'https://dsapi.tranzak.me/xp021/v1/request/create' => Http::response([
-            'request_id' => 'req_123456',
-            'links' => [
-                'payment_url' => 'https://pay.tranzak.me/payment/req_123456'
+            'data' => [
+                'requestId' => 'req_123456',
+                'links' => [
+                    'paymentAuthUrl' => 'https://pay.tranzak.me/payment/req_123456'
+                ],
+                'status' => 'PENDING',
             ],
-            'status' => 'PENDING',
+            'success' => true
         ], 200)
     ]);
     
@@ -57,10 +60,10 @@ test('TranzakClient can create payment successfully', function () {
         'app_id' => 'test_app_id',
     ]);
     
-    expect($result)->toHaveKey('request_id')
+    expect($result)->toHaveKey('requestId')
         ->and($result)->toHaveKey('links')
-        ->and($result['links'])->toHaveKey('payment_url')
-        ->and($result['request_id'])->toBe('req_123456');
+        ->and($result['links'])->toHaveKey('paymentAuthUrl')
+        ->and($result['requestId'])->toBe('req_123456');
 });
 
 test('TranzakClient throws exception on failed payment creation', function () {
@@ -97,12 +100,15 @@ test('TranzakClient can get payment status successfully', function () {
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/req_123456' => Http::response([
-            'request_id' => 'req_123456',
-            'status' => 'SUCCESSFUL',
-            'amount' => 1000,
-            'currencyCode' => 'XAF',
-            'mchTransactionRef' => 'TXN_123',
+        'https://dsapi.tranzak.me/xp021/v1/request/details?requestId=req_123456' => Http::response([
+            'data' => [
+                'requestId' => 'req_123456',
+                'status' => 'SUCCESSFUL',
+                'amount' => 1000,
+                'currencyCode' => 'XAF',
+                'mchTransactionRef' => 'TXN_123',
+            ],
+            'success' => true
         ], 200)
     ]);
     
@@ -111,9 +117,9 @@ test('TranzakClient can get payment status successfully', function () {
     $result = $client->getPaymentStatus('req_123456');
     
     expect($result)->toHaveKey('status')
-        ->and($result)->toHaveKey('request_id')
+        ->and($result)->toHaveKey('requestId')
         ->and($result['status'])->toBe('SUCCESSFUL')
-        ->and($result['request_id'])->toBe('req_123456');
+        ->and($result['requestId'])->toBe('req_123456');
 });
 
 test('TranzakClient throws exception on failed status check', function () {
@@ -154,11 +160,14 @@ test('TranzakClient retries on transient failures', function () {
         }
         
         return Http::response([
-            'request_id' => 'req_123456',
-            'links' => [
-                'payment_url' => 'https://pay.tranzak.me/payment/req_123456'
+            'data' => [
+                'requestId' => 'req_123456',
+                'links' => [
+                    'paymentAuthUrl' => 'https://pay.tranzak.me/payment/req_123456'
+                ],
+                'status' => 'PENDING',
             ],
-            'status' => 'PENDING',
+            'success' => true
         ], 200);
     });
     
@@ -180,7 +189,7 @@ test('TranzakClient retries on transient failures', function () {
         'app_id' => 'test_app_id',
     ]);
     
-    expect($result)->toHaveKey('request_id')
+    expect($result)->toHaveKey('requestId')
         ->and($attemptCount)->toBe(3);
 });
 
@@ -226,8 +235,11 @@ test('TranzakClient validates response structure for payment creation', function
             'data' => ['token' => 'mocked_token']
         ], 200),
         'https://dsapi.tranzak.me/xp021/v1/request/create' => Http::response([
-            'request_id' => 'req_123456',
-            // Missing 'links' field
+            'data' => [
+                'requestId' => 'req_123456',
+                // Missing 'links' field
+            ],
+            'success' => true
         ], 200)
     ]);
     
@@ -252,9 +264,12 @@ test('TranzakClient validates response structure for status check', function () 
         'https://dsapi.tranzak.me/auth/token' => Http::response([
             'data' => ['token' => 'mocked_token']
         ], 200),
-        'https://dsapi.tranzak.me/v1/payment/status/req_123456' => Http::response([
-            'request_id' => 'req_123456',
-            // Missing 'status' field
+        'https://dsapi.tranzak.me/xp021/v1/request/details?requestId=req_123456' => Http::response([
+            'data' => [
+                'requestId' => 'req_123456',
+                // Missing 'status' field
+            ],
+            'success' => true
         ], 200)
     ]);
     

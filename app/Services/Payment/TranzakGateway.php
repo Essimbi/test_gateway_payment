@@ -112,8 +112,8 @@ class TranzakGateway implements PaymentGatewayInterface
         
         // Adapt the response to the common interface format
         return [
-            'payment_url' => $response['links']['payment_url'],
-            'payment_id' => $response['request_id'],
+            'payment_url' => $response['links']['paymentAuthUrl'],
+            'payment_id' => $response['requestId'],
         ];
     }
     
@@ -162,17 +162,38 @@ class TranzakGateway implements PaymentGatewayInterface
     }
     
     /**
+     * Normalize Tranzak webhook (TPN) payload structure.
+     * 
+     * Tranzak sends transaction data inside a 'resource' object at the top level.
+     * This method extracts it to a flat structure for consistent processing.
+     * 
+     * @param array $payload Raw webhook payload
+     * @return array Normalized payload with transaction data at top level
+     */
+    private function normalizeWebhookPayload(array $payload): array
+    {
+        if (isset($payload['resource']) && is_array($payload['resource'])) {
+            $resource = $payload['resource'];
+            return array_merge($resource, [
+                'request_id' => $resource['requestId'] ?? $resource['request_id'] ?? $payload['resourceId'] ?? null,
+                'status' => $resource['transactionStatus'] ?? $resource['status'] ?? null,
+            ]);
+        }
+        return $payload;
+    }
+
+    /**
      * Handle callback notification from Tranzak
      * 
      * Processes a callback/webhook notification from Tranzak.
-     * Extracts relevant payment information from the Tranzak payload format.
+     * Supports both flat payload and TPN format (data inside 'resource').
      * 
      * Validates: Requirements 12.1, 12.2, 12.3, 12.5
      * 
      * @param array $payload Raw callback payload from Tranzak
      * 
      * @return array Processed callback data containing:
-     *   - transaction_id: Transaction identifier
+     *   - transaction_id: Transaction identifier (internal)
      *   - status: Mapped payment status
      *   - verified: Whether the callback was verified
      * 
@@ -180,28 +201,34 @@ class TranzakGateway implements PaymentGatewayInterface
      */
     public function handleCallback(array $payload): array
     {
+        $payload = $this->normalizeWebhookPayload($payload);
+
         Log::debug('TranzakGateway: Handling callback', [
-            'request_id' => $payload['request_id'] ?? null,
+            'request_id' => $payload['request_id'] ?? $payload['requestId'] ?? null,
             'mchTransactionRef' => $payload['mchTransactionRef'] ?? null,
         ]);
-        
+
         // Validate payload structure (Requirement 12.1)
         $this->validateCallbackPayload($payload);
         
-        // Extract transaction ID from Tranzak payload
-        // Prefer mchTransactionRef (our transaction ID) over request_id
-        $transactionId = $payload['mchTransactionRef'] ?? $payload['request_id'] ?? null;
-        
-        // Verify transaction exists (Requirement 12.2)
-        $this->verifyTransactionExists($transactionId);
-        
+        // Extract identifiers - try request_id first (matches gateway_payment_id), then mchTransactionRef
+        $requestId = $payload['request_id'] ?? $payload['requestId'] ?? null;
+        $mchTransactionRef = $payload['mchTransactionRef'] ?? null;
+
+        // Verify transaction exists (Requirement 12.2) - returns transaction for downstream use
+        $transaction = $this->verifyTransactionExists($requestId, $mchTransactionRef);
+
         // Validate API response if request_id is present (Requirement 12.3)
-        if (isset($payload['request_id'])) {
+        if ($requestId !== null) {
             $this->validateApiResponse($payload);
         }
-        
-        // Map the status from the callback
-        $status = $this->mapStatus($payload['status'] ?? 'PENDING');
+
+        // Map the status from the callback (support both 'status' and 'transactionStatus')
+        $gatewayStatus = $payload['transactionStatus'] ?? $payload['status'] ?? 'PENDING';
+        $status = $this->mapStatus($gatewayStatus);
+
+        // Return internal transaction_id for PaymentService
+        $transactionId = $transaction->transaction_id;
         
         Log::info('TranzakGateway: Callback processed', [
             'transaction_id' => $transactionId,
@@ -231,18 +258,20 @@ class TranzakGateway implements PaymentGatewayInterface
     public function validateCallback(array $payload): bool
     {
         Log::debug('TranzakGateway: Validating callback');
-        
+
+        $payload = $this->normalizeWebhookPayload($payload);
+
         // For Tranzak, we validate by checking if the request_id exists
         // and can be verified via the API
-        if (!isset($payload['request_id']) && !isset($payload['mchTransactionRef'])) {
+        $requestId = $payload['request_id'] ?? $payload['requestId'] ?? null;
+        $mchTransactionRef = $payload['mchTransactionRef'] ?? null;
+        if ($requestId === null && $mchTransactionRef === null) {
             Log::warning('TranzakGateway: Callback missing required identifiers');
             return false;
         }
-        
+
         try {
-            // Attempt to verify the transaction via API
-            $requestId = $payload['request_id'] ?? null;
-            
+            // Attempt to verify the transaction via API (requires requestId)
             if ($requestId) {
                 $this->client->getPaymentStatus($requestId);
                 Log::debug('TranzakGateway: Callback validated successfully');
@@ -271,18 +300,17 @@ class TranzakGateway implements PaymentGatewayInterface
      */
     private function validateCallbackPayload(array $payload): void
     {
-        // Check for required fields
-        $requiredFields = ['status'];
+        $status = $payload['transactionStatus'] ?? $payload['status'] ?? null;
+        $requestId = $payload['request_id'] ?? $payload['requestId'] ?? null;
+        $mchTransactionRef = $payload['mchTransactionRef'] ?? null;
+
         $missingFields = [];
-        
-        foreach ($requiredFields as $field) {
-            if (!isset($payload[$field])) {
-                $missingFields[] = $field;
-            }
+
+        if ($status === null) {
+            $missingFields[] = 'status or transactionStatus';
         }
-        
-        // Must have at least one identifier (request_id or mchTransactionRef)
-        if (!isset($payload['request_id']) && !isset($payload['mchTransactionRef'])) {
+
+        if ($requestId === null && $mchTransactionRef === null) {
             $missingFields[] = 'request_id or mchTransactionRef';
         }
         
@@ -298,7 +326,7 @@ class TranzakGateway implements PaymentGatewayInterface
         }
         
         // Validate status is a string
-        if (!is_string($payload['status'])) {
+        if (!is_string($status)) {
             Log::error('TranzakGateway: Invalid status type in callback', [
                 'status_type' => gettype($payload['status']),
                 'payload' => $payload,
@@ -308,7 +336,7 @@ class TranzakGateway implements PaymentGatewayInterface
                 'Invalid Tranzak callback payload: status must be a string'
             );
         }
-        
+
         Log::debug('TranzakGateway: Callback payload structure validated');
     }
     
@@ -317,49 +345,61 @@ class TranzakGateway implements PaymentGatewayInterface
      * 
      * Validates: Requirement 12.2
      * 
-     * @param string|null $transactionId Transaction identifier
+     * @param string|null $requestId Tranzak request ID (matches gateway_payment_id)
+     * @param string|null $mchTransactionRef Merchant transaction reference (may match transaction_id)
+     * @return \App\Models\Transaction The found transaction
      * @throws \App\Exceptions\Payment\PaymentValidationException If transaction not found
      */
-    private function verifyTransactionExists(?string $transactionId): void
+    private function verifyTransactionExists(?string $requestId, ?string $mchTransactionRef): \App\Models\Transaction
     {
-        if (empty($transactionId)) {
+        $identifiers = array_filter([$requestId, $mchTransactionRef]);
+        if (empty($identifiers)) {
             Log::error('TranzakGateway: Empty transaction ID in callback');
-            
+
             throw new \App\Exceptions\Payment\PaymentValidationException(
                 'Invalid Tranzak callback: transaction ID is empty'
             );
         }
-        
-        // Check if transaction exists
-        $transaction = \App\Models\Transaction::where('transaction_id', $transactionId)
-            ->orWhere('gateway_payment_id', $transactionId)
-            ->first();
-        
+
+        // Check if transaction exists - try request_id first (gateway_payment_id), then mchTransactionRef (transaction_id)
+        $transaction = null;
+        foreach ($identifiers as $identifier) {
+            $transaction = \App\Models\Transaction::where('transaction_id', $identifier)
+                ->orWhere('gateway_payment_id', $identifier)
+                ->first();
+            if ($transaction) {
+                break;
+            }
+        }
+
         if (!$transaction) {
             Log::error('TranzakGateway: Transaction not found', [
-                'transaction_id' => $transactionId,
+                'request_id' => $requestId,
+                'mch_transaction_ref' => $mchTransactionRef,
             ]);
-            
+
             throw new \App\Exceptions\Payment\PaymentValidationException(
-                'Invalid Tranzak callback: transaction not found - ' . $transactionId
+                'Invalid Tranzak callback: transaction not found'
             );
         }
-        
+
         // Verify it's a Tranzak transaction
         if ($transaction->gateway_type !== GatewayType::TRANZAK) {
             Log::error('TranzakGateway: Transaction is not a Tranzak transaction', [
-                'transaction_id' => $transactionId,
+                'transaction_id' => $transaction->transaction_id,
                 'gateway_type' => $transaction->gateway_type->value,
             ]);
-            
+
             throw new \App\Exceptions\Payment\PaymentValidationException(
                 'Invalid Tranzak callback: transaction is not a Tranzak transaction'
             );
         }
-        
+
         Log::debug('TranzakGateway: Transaction exists and is valid', [
-            'transaction_id' => $transactionId,
+            'transaction_id' => $transaction->transaction_id,
         ]);
+
+        return $transaction;
     }
     
     /**
@@ -420,8 +460,8 @@ class TranzakGateway implements PaymentGatewayInterface
     {
         return match(strtoupper($gatewayStatus)) {
             'SUCCESSFUL', 'SUCCESS', 'COMPLETED' => PaymentStatus::ACCEPTED,
-            'FAILED', 'CANCELLED', 'CANCELED', 'REJECTED' => PaymentStatus::REFUSED,
-            'PENDING', 'PROCESSING', 'INITIATED' => PaymentStatus::PENDING,
+            'FAILED', 'CANCELLED', 'CANCELED', 'CANCELLED/REFUNDED', 'REJECTED', 'REFUNDED' => PaymentStatus::REFUSED,
+            'PENDING', 'PROCESSING', 'INITIATED', 'PAYMENT_IN_PROGRESS', 'PAYER_REDIRECT_REQUIRED' => PaymentStatus::PENDING,
             default => PaymentStatus::PENDING,
         };
     }

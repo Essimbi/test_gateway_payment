@@ -172,11 +172,25 @@ class CinetPayController extends Controller
             // Get payment URL from transaction metadata
             $paymentUrl = $transaction->metadata['payment_url'] ?? null;
             
+            Log::debug('CinetPayController: Checking payment URL', [
+                'transaction_id' => $transaction->transaction_id,
+                'has_url' => !empty($paymentUrl),
+                'metadata' => $transaction->metadata
+            ]);
+
             if (!$paymentUrl) {
+                Log::error('CinetPayController: Payment URL not found in transaction metadata', [
+                    'transaction_id' => $transaction->transaction_id,
+                    'metadata' => $transaction->metadata
+                ]);
                 throw new PaymentException('Payment URL not available');
             }
 
             // Redirect to gateway payment page
+            Log::info('CinetPayController: Redirecting to gateway', [
+                'transaction_id' => $transaction->transaction_id,
+                'url' => $paymentUrl
+            ]);
             return redirect()->away($paymentUrl);
 
         } catch (UnsupportedGatewayException $e) {

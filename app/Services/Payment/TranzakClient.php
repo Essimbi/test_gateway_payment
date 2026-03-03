@@ -130,15 +130,24 @@ class TranzakClient
                     'url' => "{$this->baseUrl}/xp021/v1/request/create",
                 ]);
                 
+                $requestBody = [
+                    'amount' => $data['amount'],
+                    'currencyCode' => $data['currency'] ?? 'XAF',
+                    'description' => $data['description'] ?? 'Payment',
+                    'mchTransactionRef' => $data['mchTransactionRef'] ?? 'TXN_' . uniqid(),
+                    'returnUrl' => $data['return_url'],
+                ];
+
+                if (!empty($data['cancel_url'])) {
+                    $requestBody['cancelUrl'] = $data['cancel_url'];
+                }
+                if (!empty($data['callback_url'])) {
+                    $requestBody['callbackUrl'] = $data['callback_url'];
+                }
+
                 $response = Http::withHeaders($headers)
                     ->timeout($this->timeout)
-                    ->post("{$this->baseUrl}/xp021/v1/request/create", [
-                        'amount' => $data['amount'],
-                        'currencyCode' => $data['currency'] ?? 'XAF',
-                        'description' => $data['description'] ?? 'Payment',
-                        'mchTransactionRef' => $data['mchTransactionRef'] ?? 'TXN_' . uniqid(),
-                        'returnUrl' => $data['return_url'],
-                    ]);
+                    ->post("{$this->baseUrl}/xp021/v1/request/create", $requestBody);
                 
                 Log::debug('TranzakClient: Payment creation response', [
                     'status' => $response->status(),
@@ -149,12 +158,20 @@ class TranzakClient
                 if (!$response->successful()) {
                     $errorBody = $response->json();
                     throw new TranzakApiException(
-                        "Failed to create payment: " . ($errorBody['message'] ?? $response->body()),
+                        "Failed to create payment: " . ($errorBody['errorMsg'] ?? $errorBody['message'] ?? $response->body()),
                         $response->status()
                     );
                 }
                 
                 $body = $response->json();
+
+                // Tranzak may return HTTP 200 with success=false; always check success flag per documentation
+                if (isset($body['success']) && $body['success'] === false) {
+                    throw new TranzakApiException(
+                        "Failed to create payment: " . ($body['errorMsg'] ?? 'Unknown error'),
+                        $body['errorCode'] ?? 500
+                    );
+                }
                 
                 Log::debug('TranzakClient: Raw response body', [
                     'body' => $body
@@ -188,8 +205,8 @@ class TranzakClient
                 }
                 
                 return [
-                    'links' => ['payment_url' => $paymentUrl],
-                    'request_id' => $requestId,
+                    'links' => ['paymentAuthUrl' => $paymentUrl],
+                    'requestId' => $requestId,
                     'data' => $responseData
                 ];
             };
@@ -259,12 +276,20 @@ class TranzakClient
                 if (!$response->successful()) {
                     $errorBody = $response->json();
                     throw new TranzakApiException(
-                        "Failed to get payment status: " . ($errorBody['message'] ?? $response->body()),
+                        "Failed to get payment status: " . ($errorBody['errorMsg'] ?? $errorBody['message'] ?? $response->body()),
                         $response->status()
                     );
                 }
                 
                 $body = $response->json();
+
+                // Tranzak may return HTTP 200 with success=false; always check success flag per documentation
+                if (isset($body['success']) && $body['success'] === false) {
+                    throw new TranzakApiException(
+                        "Failed to get payment status: " . ($body['errorMsg'] ?? 'Unknown error'),
+                        $body['errorCode'] ?? 500
+                    );
+                }
                 
                 // Tranzak API wraps the response in a 'data' key
                 $responseData = isset($body['data']) && is_array($body['data']) ? $body['data'] : $body;

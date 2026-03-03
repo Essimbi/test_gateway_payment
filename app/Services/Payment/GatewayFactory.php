@@ -134,11 +134,15 @@ class GatewayFactory
             apiKey: $config['api_key'],
             appId: $config['app_id'],
             baseUrl: $config['base_url'] ?? 'https://dsapi.tranzak.me',
-            timeout: $config['timeout'] ?? 30,
+            timeout: $config['timeout'] ?? 60,
             retryAttempts: $config['retry_attempts'] ?? 3,
             retryDelays: $config['retry_delays'] ?? [1, 2, 4]
         );
         
+        Log::debug('TranzakClient instantiated in Factory', [
+            'timeout' => $config['timeout'] ?? 60,
+        ]);
+
         // Create and return the gateway
         return new TranzakGateway($client, $config);
     }
